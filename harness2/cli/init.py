@@ -32,12 +32,18 @@ from ..core import tree as HT
 MODELS = {
     "claude": ("claude-sonnet-5-5", "claude-opus-5-5"),
     "codex": ("gpt-6.1-sol", "gpt-6.1-sol"),
+    "antigravity": ("gemini-3-flash-preview", "gemini-3.1-pro-high"),
 }
 # executor/channel -> (subscription provider, API-key provider)
-PROVIDERS = {"claude": ("claude-login", "anthropic"), "codex": ("chatgpt-login", "openai")}
+PROVIDERS = {
+    "claude": ("claude-login", "anthropic"),
+    "codex": ("chatgpt-login", "openai"),
+    "antigravity": ("antigravity-login", "gemini"),
+}
 AUTH = {
     "claude": ("your Claude subscription, through Claude Code's own login", "ANTHROPIC_API_KEY"),
     "codex": ("your ChatGPT subscription, through a Codex login for harness2", "OPENAI_API_KEY"),
+    "antigravity": ("your Google / Antigravity login, through Antigravity CLI", "GEMINI_API_KEY"),
 }
 
 CONFIG = """\
@@ -81,7 +87,11 @@ def add_parser(sub) -> argparse.ArgumentParser:
     )
     p.add_argument("--yes", "-y", action="store_true", help="take every default, ask nothing")
     p.add_argument("--force", action="store_true", help="overwrite an existing config file")
-    p.add_argument("--executor", choices=("claude", "codex", "command"), help="skip that question")
+    p.add_argument(
+        "--executor",
+        choices=("claude", "codex", "antigravity", "command"),
+        help="skip that question",
+    )
     p.add_argument(
         "--auth",
         choices=("login", "api-key"),
@@ -110,13 +120,13 @@ def _run(args) -> tuple[int, dict]:
     print(f"Setting up Harness² in {root}")
 
     interactive = not args.yes and sys.stdin.isatty()
-    found = {name: _version(name) for name in ("claude", "codex")}
-    default = next((name for name in ("claude", "codex") if found[name]), None)
+    found = {name: _cli_version(name) for name in ("claude", "codex", "antigravity")}
+    default = next((name for name in ("claude", "codex", "antigravity") if found[name]), None)
     executor = args.executor or (_pick_executor(ask, found, default) if interactive else default)
     if executor is None:
         message = (
-            "Neither Claude Code (`claude`) nor Codex (`codex`) is on PATH. Install one, or "
-            "rerun with --executor command to drive your own agent."
+            "Neither Claude Code (`claude`), Codex (`codex`) nor Antigravity (`agy`) is on PATH. "
+            "Install one, or rerun with --executor command to drive your own agent."
         )
         print(message, file=sys.stderr)
         return 1, {"error": message, "exit_code": 1}
@@ -128,7 +138,9 @@ def _run(args) -> tuple[int, dict]:
         editable = [g.strip() for g in ask("Editable files, comma-separated globs", "").split(",")]
         editable = [g for g in editable if g]
         command_lines = COMMAND_LINES.format(command=_q(command), editable=_q(editable))
-        channel = "claude" if found["claude"] else "codex"
+        channel = next(
+            (name for name in ("claude", "codex", "antigravity") if found[name]), "claude"
+        )
     else:
         channel = executor
     auth = args.auth or (_pick_auth(ask, channel) if interactive else "login")
@@ -194,6 +206,12 @@ def _asker(*, interactive: bool):
     return ask
 
 
+def _cli_version(name: str) -> str:
+    if name == "antigravity":
+        return _version("agy") or _version("antigravity")
+    return _version(name)
+
+
 def _version(binary: str) -> str:
     path = shutil.which(binary)
     if not path:
@@ -206,13 +224,13 @@ def _version(binary: str) -> str:
 
 
 def _pick_executor(ask, found: dict[str, str], default: str | None) -> str | None:
-    options = ["claude", "codex", "command"]
+    options = ["claude", "codex", "antigravity", "command"]
     if default is None:
         return None
     print("Which agent should run your tasks?")
     for i, name in enumerate(options, 1):
         detail = found.get(name) or ("not found" if name != "command" else "your own command")
-        print(f"  {i}) {name:<8} {detail}")
+        print(f"  {i}) {name:<11} {detail}")
     while True:
         answer = ask("Choose", str(options.index(default) + 1))
         if answer in options:
@@ -227,10 +245,17 @@ def _harness_summary(where: Path, executor: str, editable: list[str]) -> str:
     if executor == "command":
         found = sorted({p for g in editable for p in where.glob(g) if p.is_file()})
         return f"Harness: {len(found)} editable file(s) under {where}."
+    from ..substrate.antigravity import AntigravitySubstrate
     from ..substrate.claude import ClaudeSubstrate
     from ..substrate.codex import CodexSubstrate
 
-    sub = ClaudeSubstrate() if executor == "claude" else CodexSubstrate()
+    sub = (
+        ClaudeSubstrate()
+        if executor == "claude"
+        else AntigravitySubstrate()
+        if executor in ("antigravity", "agy")
+        else CodexSubstrate()
+    )
     tree = sub.import_tree(where)
     surface = sub.surface()
     always = surface.always_on[0]
@@ -299,11 +324,16 @@ def _q(value) -> str:
 
 LOGIN_CHECKS = {
     "claude-login": (["claude", "auth", "status"], "Claude Code", "claude auth login"),
+    "antigravity-login": (
+        ["agy", "-p", "/usage", "--output-format", "json"],
+        "Antigravity",
+        "agy",
+    ),
 }
 
 
 def _quiet(argv: list[str]) -> bool:
     try:
-        return subprocess.run(argv, capture_output=True, timeout=20).returncode == 0
+        return subprocess.run(argv, capture_output=True, timeout=25).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

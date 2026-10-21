@@ -35,9 +35,11 @@ from harness2.core import tree as HT
 from harness2.core.spec import INSTALL_MODES, BenchPrompts
 from harness2.settings import ConfigError
 from harness2.substrate import (
+    ANTIGRAVITY_SURFACE,
     CLAUDE_SURFACE,
     CODEX_SURFACE,
     OPENCODE_SURFACE,
+    AntigravitySubstrate,
     ClaudeSubstrate,
     CodexSubstrate,
     CommandSubstrate,
@@ -48,7 +50,7 @@ from harness2.substrate.claude import parse_events
 
 class SurfaceTests(unittest.TestCase):
     def test_script_dir_and_references(self):
-        for surface in (CLAUDE_SURFACE, CODEX_SURFACE, OPENCODE_SURFACE):
+        for surface in (CLAUDE_SURFACE, CODEX_SURFACE, ANTIGRAVITY_SURFACE, OPENCODE_SURFACE):
             with self.subTest(surface=surface.name):
                 script = f"{surface.script_dir}/helper.py"
                 self.assertTrue(HT.is_allowed(surface, script))
@@ -105,10 +107,12 @@ class SurfaceTests(unittest.TestCase):
 
     def test_new_install_modes_and_all_surface_prompts(self):
         self.assertIn("claude_root", INSTALL_MODES)
+        self.assertIn("antigravity_root", INSTALL_MODES)
         self.assertIn("command_files", INSTALL_MODES)
         for surface in (
             CLAUDE_SURFACE,
             CODEX_SURFACE,
+            ANTIGRAVITY_SURFACE,
             OPENCODE_SURFACE,
             CommandSubstrate("true", ("*.md",)).surface(),
         ):
@@ -125,7 +129,7 @@ class SurfaceTests(unittest.TestCase):
             file = root / "file.txt"
             file.write_text("content")
             self.assertFalse(HT.is_tree(command, file))
-            for surface in (CLAUDE_SURFACE, CODEX_SURFACE, OPENCODE_SURFACE):
+            for surface in (CLAUDE_SURFACE, CODEX_SURFACE, ANTIGRAVITY_SURFACE, OPENCODE_SURFACE):
                 self.assertFalse(HT.is_tree(surface, root))
                 always_on = root / surface.always_on[0]
                 always_on.write_text("")
@@ -242,6 +246,38 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(set(result["deleted"]), set(tree))
         self.assertTrue((self.root / ".codex/config.toml").is_file())
         self.assertTrue((self.root / ".agents/skills/helper/reference.md").is_file())
+
+    def test_antigravity_round_trip_subagent_frontmatter_named_hooks_and_sibling_fallback(self):
+        sub = AntigravitySubstrate()
+        self.write("CLAUDE.md", "Fallback from Claude.")
+        self.assertEqual(sub.import_tree(self.root), {})
+        self.assertEqual(
+            sub.import_tree(self.root, fallback_sibling=True),
+            {"AGENTS.md": "Fallback from Claude."},
+        )
+        (self.root / "CLAUDE.md").unlink()
+        self.write("AGENTS.md", "Use helper.")
+        self.write(".agents/skills/helper/SKILL.md", "---\ndescription: Help\n---\nBody")
+        self.write(".agents/scripts/tool.py", "pass\n")
+        self.write(
+            ".agents/agents/helper.md", "---\ndescription: Help\nsubagent: true\n---\nDo it."
+        )
+        named_hooks = {
+            "guard": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"command": "true"}]}]}
+        }
+        self.write(".agents/hooks.json", json.dumps(named_hooks))
+        tree = sub.import_tree(self.root)
+        self.assertIn("sub_agents/helper/AGENT.md", tree)
+        self.assertIn(".agents/hooks.json", tree)
+        HT.validate(ANTIGRAVITY_SURFACE, tree)
+        dest = self.root / "destination"
+        plain_agent = {**tree, "sub_agents/reviewer/AGENT.md": "---\ndescription: Review\n---\nGo"}
+        result = sub.export_tree(plain_agent, dest, base={})
+        self.assertIn(".agents/agents/reviewer.md", result["written"])
+        exported = (dest / ".agents/agents/reviewer.md").read_text()
+        self.assertIn("name: reviewer\n", exported)
+        self.assertIn("subagent: true\n", exported)
+        self.assertEqual(json.loads((dest / ".agents/hooks.json").read_text()), named_hooks)
 
     def test_strip_native_preserves_unmanaged_files_and_settings(self):
         for sub in (ClaudeSubstrate(), CodexSubstrate()):
@@ -465,7 +501,7 @@ Path(os.environ['CAPTURE']).write_text(json.dumps({'argv': sys.argv[1:], 'env': 
 print('{"type":"result","result":"ok","total_cost_usd":0.01}')
 """
         )
-        for name in ("claude", "codex", "opencode", "wrapper cli"):
+        for name in ("claude", "codex", "agy", "opencode", "wrapper cli"):
             binary = self.root / name
             binary.write_text(script)
             binary.chmod(0o755)
@@ -554,7 +590,7 @@ print('{"type":"result","result":"ok","total_cost_usd":0.01}')
 
     def test_wrapped_binary_overrides_legacy_argv_and_preflight(self):
         wrapper = shlex.quote(str(self.root / "wrapper cli")) + " --wrapper"
-        for cls in (ClaudeSubstrate, CodexSubstrate, OpencodeSubstrate):
+        for cls in (ClaudeSubstrate, CodexSubstrate, AntigravitySubstrate, OpencodeSubstrate):
             sub = cls(bin=wrapper)
             sub.preflight()
             with patch.dict(os.environ, {"VERSION_EXIT": "2"}):

@@ -14,6 +14,7 @@
 
 """Agent-framework and command executors behind the substrate interface."""
 
+from .antigravity import ANTIGRAVITY_SURFACE, AntigravitySubstrate
 from .base import Install, Launcher, RunRequest, Substrate
 from .claude import CLAUDE_SURFACE, ClaudeSubstrate
 from .codex import CODEX_SURFACE, CodexSubstrate
@@ -31,5 +32,7 @@ __all__ = [
     "CODEX_SURFACE",
     "ClaudeSubstrate",
     "CLAUDE_SURFACE",
+    "AntigravitySubstrate",
+    "ANTIGRAVITY_SURFACE",
     "CommandSubstrate",
 ]

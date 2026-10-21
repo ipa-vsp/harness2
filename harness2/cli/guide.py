@@ -46,10 +46,11 @@ project's files; `harness2 apply` writes the final harness back once the person 
 
 ## Workflow
 
-1. `harness2 init --yes [--executor claude|codex] [--auth login|api-key]` creates
-   .harness2/. `--auth login` uses a Claude or ChatGPT subscription: Claude Code's own login
-   as it is, or for Codex a separate login the person makes once with `harness2 login codex`
-   (it opens a browser; ask them to run it). `harness2 login --json` shows which are ready. Change any choice afterwards with `harness2 config set KEY VALUE`, for
+1. `harness2 init --yes [--executor claude|codex|antigravity] [--auth login|api-key]` creates
+   .harness2/. `--auth login` uses a Claude, ChatGPT or Antigravity subscription: Claude Code's or
+   Antigravity's own login as it is, or for Codex a separate login the person makes once with
+   `harness2 login codex` (it opens a browser; ask them to run it). `harness2 login --json` shows
+   which are ready. Change any choice afterwards with `harness2 config set KEY VALUE`, for
    example `executor.model`.
 2. Tasks. `harness2 task new <id> [--files] [--check "<cmd>"]`, then write the request in
    .harness2/tasks/<id>/task.md the way the person would really ask for it. Good tasks are
@@ -94,30 +95,37 @@ description: Use harness2 when the person wants their coding agent's setup (CLAU
 """
 
 
+INSTALL_PATHS = {
+    "claude": (Path.home() / ".claude/skills/harness2/SKILL.md", "Claude Code"),
+    "codex": (Path.home() / ".agents/skills/harness2/SKILL.md", "Codex / Antigravity"),
+    "antigravity": (Path.home() / ".agents/skills/harness2/SKILL.md", "Antigravity"),
+}
+
+
 def add_parser(sub) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "guide",
         help="print the guide for AI agents that use harness2",
         description="Print how an AI agent should drive harness2, with this project's current "
-        "state. Point your agent at it, or install it as a Claude Code skill.",
+        "state. Point your agent at it, or install it as a user-level skill.",
     )
     p.add_argument(
         "--install",
-        choices=("claude",),
-        help="install the guide as a user-level Claude Code skill (~/.claude/skills/harness2)",
+        choices=("claude", "codex", "antigravity"),
+        help="install the guide as a user-level skill (~/.claude/skills or ~/.agents/skills)",
     )
     return p
 
 
 def run(args, ctx) -> int:
     if args.install:
-        path = Path.home() / ".claude/skills/harness2/SKILL.md"
+        path, label = INSTALL_PATHS[args.install]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(SKILL_HEAD + GUIDE, encoding="utf-8")
         ctx.out(
             {"installed": str(path)},
             lambda data: (
-                f"Installed {data['installed']}. Claude Code loads it in new "
+                f"Installed {data['installed']}. {label} loads it in new "
                 "sessions; harness2's own runs never do."
             ),
         )

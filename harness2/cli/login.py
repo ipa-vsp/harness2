@@ -34,9 +34,9 @@ def add_parser(sub) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "login",
         help="check the subscription logins, or sign Codex in for harness2",
-        description="Without an argument, show whether claude-login and chatgpt-login are "
-        "ready. `harness2 login codex` signs in to ChatGPT in a Codex home kept for harness2, "
-        "apart from your own ~/.codex.",
+        description="Without an argument, show whether claude-login, chatgpt-login and "
+        "antigravity-login are ready. `harness2 login codex` signs in to ChatGPT in a Codex home "
+        "kept for harness2, apart from your own ~/.codex.",
     )
     p.add_argument("service", nargs="?", choices=("codex",), help="sign this CLI in for harness2")
     p.add_argument(
@@ -51,7 +51,7 @@ def run(args, ctx) -> int:
     home = providers.codex_login_home(ctx.settings.provider("chatgpt-login"))
     if args.service is None:
         rows = _status(home)
-        ctx.out(rows, lambda data: "\n".join(f"{r['provider']:<14} {r['detail']}" for r in data))
+        ctx.out(rows, lambda data: "\n".join(f"{r['provider']:<18} {r['detail']}" for r in data))
         return 0
     if shutil.which("codex") is None:
         print("`codex` is not on PATH; install Codex first.", file=sys.stderr)
@@ -79,6 +79,7 @@ def run(args, ctx) -> int:
 def _status(home) -> list[dict]:
     claude = shutil.which("claude") and _ok(["claude", "auth", "status"])
     codex = providers.codex_logged_in(home)
+    agy = shutil.which("agy") and _ok(["agy", "-p", "/usage", "--output-format", "json"])
     return [
         {
             "provider": "claude-login",
@@ -92,11 +93,18 @@ def _status(home) -> list[dict]:
             "ready": codex,
             "detail": f"ready ({home})" if codex else "not signed in; run `harness2 login codex`",
         },
+        {
+            "provider": "antigravity-login",
+            "ready": bool(agy),
+            "detail": "ready (Antigravity's own login)"
+            if agy
+            else "Antigravity is not logged in; run `agy` to sign in",
+        },
     ]
 
 
 def _ok(argv: list[str]) -> bool:
     try:
-        return subprocess.run(argv, capture_output=True, timeout=20).returncode == 0
+        return subprocess.run(argv, capture_output=True, timeout=25).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False

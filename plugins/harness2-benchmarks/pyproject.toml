@@ -22,7 +22,7 @@ version = "0.1.0"
 description = "The Harness² paper benchmarks (JobBench, LAB, WorkBuddy-Bench) as harness2 suites"
 readme = "README.md"
 license = "Apache-2.0"
-requires-python = ">=3.12,<3.14"
+requires-python = ">=3.12,<3.15"
 dependencies = ["harness2-cli"]
 
 [project.optional-dependencies]

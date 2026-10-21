@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,9 +27,18 @@ from urllib.parse import urlsplit
 
 from .settings import ConfigError, state_dir
 
-PROVIDER_TYPES = ("anthropic", "openai", "vertex", "bedrock", "claude-login", "chatgpt-login")
+PROVIDER_TYPES = (
+    "anthropic",
+    "openai",
+    "gemini",
+    "vertex",
+    "bedrock",
+    "claude-login",
+    "chatgpt-login",
+    "antigravity-login",
+)
 USAGE_LIMIT = re.compile(
-    r"(?i)usage limit|rate[ _-]?limit|too many requests|\b429\b|quota|credit balance is too low"
+    r"(?i)usage limit|rate[ _-]?limit|too many requests|\b429\b|quota|credit balance is too low|resource_exhausted|credits exhausted"
 )
 STRIP_ENV = (
     "ANTHROPIC_API_KEY",
@@ -85,6 +95,27 @@ def codex_logged_in(home: Path) -> bool:
         return False
 
 
+def antigravity_logged_in(p: Provider | None = None) -> bool:
+    binary = shutil.which("agy") or shutil.which("antigravity") or "agy"
+    env = {k: v for k, v in os.environ.items() if k not in STRIP_ENV}
+    if p is not None and p.home:
+        env["ANTIGRAVITY_CLI_HOME"] = str(Path(p.home).expanduser())
+    try:
+        return (
+            subprocess.run(
+                [binary, "-p", "/usage", "--output-format", "json"],
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=25,
+            ).returncode
+            == 0
+        )
+    except Exception:
+        return False
+
+
 def split_model(ref: str) -> tuple[str, str]:
     provider, separator, model = ref.partition("/")
     if not separator or not provider or not model:
@@ -99,6 +130,8 @@ def claude_env(p: Provider) -> dict[str, str]:
         return {}
     if p.type == "chatgpt-login":
         raise ConfigError("Claude Code cannot use a ChatGPT login.")
+    if p.type == "antigravity-login":
+        raise ConfigError("Claude Code cannot use an Antigravity login.")
     if p.type == "anthropic":
         env = {}
         if p.api_key_env:
@@ -114,8 +147,33 @@ def claude_env(p: Provider) -> dict[str, str]:
         }
     if p.type == "bedrock":
         return {"CLAUDE_CODE_USE_BEDROCK": "1", **({"AWS_REGION": p.region} if p.region else {})}
-    if p.type == "openai":
+    if p.type in ("openai", "gemini"):
         raise ConfigError("Claude Code needs an Anthropic-compatible provider.")
+    raise ConfigError(f"unknown provider type {p.type!r}; use one of {PROVIDER_TYPES}")
+
+
+def antigravity_env(p: Provider | None) -> dict[str, str]:
+    if p is None:
+        return {}
+    if p.type == "antigravity-login":
+        return {"ANTIGRAVITY_CLI_HOME": str(Path(p.home).expanduser())} if p.home else {}
+    if p.type in ("claude-login", "chatgpt-login"):
+        raise ConfigError(f"Antigravity cannot use a {p.type} login.")
+    if p.type == "gemini":
+        env = {}
+        if p.api_key_env:
+            env["GEMINI_API_KEY"] = os.environ.get(p.api_key_env, "")
+        if p.base_url:
+            env["GOOGLE_GEMINI_BASE_URL"] = p.base_url
+        return env
+    if p.type == "vertex":
+        return {
+            "GOOGLE_CLOUD_PROJECT": p.project,
+            "GOOGLE_CLOUD_LOCATION": p.region or "global",
+            "AGY_ADC_AUTH": "1",
+        }
+    if p.type in ("anthropic", "openai", "bedrock"):
+        raise ConfigError("Antigravity needs an antigravity-login, gemini or vertex provider.")
     raise ConfigError(f"unknown provider type {p.type!r}; use one of {PROVIDER_TYPES}")
 
 
@@ -159,7 +217,7 @@ def codex_args(p: Provider | None, model: str, effort: str) -> list[str]:
 
 
 def opencode_config(p: Provider, model: str) -> tuple[dict, dict[str, str]]:
-    if p.type in ("claude-login", "chatgpt-login"):
+    if p.type in ("claude-login", "chatgpt-login", "antigravity-login"):
         raise ConfigError("OpenCode needs an API provider; subscription logins are not supported.")
     if p.type == "vertex":
         region = p.region or "global"
@@ -170,6 +228,8 @@ def opencode_config(p: Provider, model: str) -> tuple[dict, dict[str, str]]:
         }
     if p.type == "bedrock":
         raise ConfigError("Bedrock is not supported on the opencode channel.")
+    if p.type == "gemini":
+        raise ConfigError("Gemini is not supported on the opencode channel; use antigravity.")
     if p.type not in ("openai", "anthropic"):
         raise ConfigError(f"unknown provider type {p.type!r}; use one of {PROVIDER_TYPES}")
     options = {}
@@ -191,11 +251,11 @@ def opencode_config(p: Provider, model: str) -> tuple[dict, dict[str, str]]:
 
 
 def litellm_params(p: Provider, model: str) -> dict:
-    if p.type in ("claude-login", "chatgpt-login"):
+    if p.type in ("claude-login", "chatgpt-login", "antigravity-login"):
         raise ConfigError(
             "The bridge needs an API provider; subscription logins are not supported."
         )
-    if p.type in ("anthropic", "openai"):
+    if p.type in ("anthropic", "openai", "gemini"):
         params = {"model": f"{p.type}/{model}", "api_key": f"os.environ/{p.api_key_env}"}
         if p.base_url or p.type == "openai":
             params["api_base"] = p.base_url
@@ -221,6 +281,10 @@ def check(p: Provider) -> list[str]:
                 f"chatgpt-login: not logged in at {home}; run `codex login` with CODEX_HOME={home}"
             ]
         return ["chatgpt-login: not logged in for harness2; run `harness2 login codex`"]
+    if p.type == "antigravity-login":
+        if antigravity_logged_in(p):
+            return []
+        return ["antigravity-login: not logged in; run `agy /login`"]
     if p.type == "claude-login":
         try:
             result = subprocess.run(

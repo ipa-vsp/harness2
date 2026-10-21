@@ -239,31 +239,47 @@ def check_hooks(surface: SurfaceSpec, src: str, errs: list[str]) -> None:
         errs.append(f"{hf} is not valid JSON: {exc}")
         return
     hooks = doc.get("hooks") if isinstance(doc, dict) else None
-    if not isinstance(hooks, dict) or not hooks:
+    if (
+        hooks is None
+        and surface.name == "antigravity"
+        and isinstance(doc, dict)
+        and doc
+        and all(isinstance(v, dict) and v for v in doc.values())
+    ):
+        groups = list(doc.values())
+    elif isinstance(hooks, dict) and hooks:
+        groups = [hooks]
+    else:
         errs.append(f'{hf} needs a top-level {{"hooks": {{"<Event>": [...]}}}} object')
         return
-    for event, entries in hooks.items():
-        if event not in surface.hook_events:
-            errs.append(
-                f"{hf}: unknown event {event!r}; the framework dispatches "
-                f"{', '.join(sorted(surface.hook_events))} (PascalCase)"
-            )
-            continue
-        if not isinstance(entries, list):
-            errs.append(f"{hf}: {event} must map to a LIST of matcher entries")
-            continue
-        for i, entry in enumerate(entries):
-            if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
-                errs.append(f"{hf}: {event}[{i}] needs a `hooks` list")
+    for group in groups:
+        for event, entries in group.items():
+            if event not in surface.hook_events:
+                errs.append(
+                    f"{hf}: unknown event {event!r}; the framework dispatches "
+                    f"{', '.join(sorted(surface.hook_events))} (PascalCase)"
+                )
                 continue
-            for h in entry["hooks"]:
-                if not isinstance(h, dict) or h.get("type") != "command":
-                    errs.append(
-                        f'{hf}: {event}[{i}] hook type must be "command" — '
-                        f"async/prompt/agent hooks are skipped as 'not supported yet'"
+            if not isinstance(entries, list):
+                errs.append(f"{hf}: {event} must map to a LIST of matcher entries")
+                continue
+            for i, entry in enumerate(entries):
+                if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
+                    errs.append(f"{hf}: {event}[{i}] needs a `hooks` list")
+                    continue
+                for h in entry["hooks"]:
+                    htype = (
+                        h.get("type", "command")
+                        if isinstance(h, dict) and surface.name == "antigravity"
+                        else (h.get("type") if isinstance(h, dict) else None)
                     )
-                elif not str(h.get("command", "")).strip():
-                    errs.append(f"{hf}: {event}[{i}] has an empty `command`")
+                    if not isinstance(h, dict) or htype != "command":
+                        errs.append(
+                            f'{hf}: {event}[{i}] hook type must be "command" — '
+                            f"async/prompt/agent hooks are skipped as 'not supported yet'"
+                        )
+                    elif not str(h.get("command", "")).strip():
+                        errs.append(f"{hf}: {event}[{i}] has an empty `command`")
 
 
 def _py_compiles(rel: str, src: str, errs: list[str]) -> None:

@@ -30,7 +30,7 @@ from .tree import SurfaceSpec
 
 ModelId = str
 
-CHANNELS = ("claude", "codex", "opencode", "human")
+CHANNELS = ("claude", "codex", "antigravity", "opencode", "human")
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,8 @@ class ChannelSpec:
     def __post_init__(self) -> None:
         if self.kind == "claude_cli":
             object.__setattr__(self, "kind", "claude")
+        elif self.kind == "agy":
+            object.__setattr__(self, "kind", "antigravity")
         if self.kind not in CHANNELS:
             raise ValueError(f"unknown channel {self.kind!r}; expected one of {CHANNELS}")
 
@@ -98,6 +100,7 @@ INSTALL_MODES = (
     "workspace_config",
     "codex_root",
     "claude_root",
+    "antigravity_root",
     "command_files",
 )
 

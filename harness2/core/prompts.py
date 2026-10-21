@@ -712,6 +712,113 @@ Hard rules, each one learned from a previous failure:
 - `.claude/scripts/*.py` filenames must be snake_case and must compile under py_compile."""
 
 
+_SURFACE_ANTIGRAVITY_HEAD = """\
+# WHAT YOU CAN CHANGE
+
+The harness is a tree of components. Each has a different runtime cost and a different reach:
+
+| path | what it is | when it is in context |
+|---|---|---|
+| `AGENTS.md` | role, procedure, rules, durable facts | ALWAYS ON -- loaded whole into every session; every token competes with the agent's own work |
+| `.agents/skills/<name>/SKILL.md` | a reusable workflow | name+description always listed; the BODY is read ON DEMAND when the agent activates the skill |
+| `.agents/skills/<name>/scripts/*` | a helper carried with its skill | run via run_command |
+| `sub_agents/<name>/AGENT.md` | a delegated subagent, installed as `.agents/agents/<name>.md` | runs in its OWN context via invoke_subagent, returns text |
+| `.agents/scripts/<name>.py` | a deterministic helper | run on demand via run_command |
+| `.agents/hooks.json` | lifecycle hooks | fire INSIDE the tool loop, on every matching event |
+
+The three that are easy to get wrong:
+
+`.agents/skills/` -- YAML frontmatter with a `description:` is REQUIRED; a `name:` line is
+optional and must match the directory. Only the name and description are shown up front, and
+the agent decides from the description alone whether to open the skill -- so the description IS
+the trigger: name the situation the skill handles, precisely and narrowly. If a skill calls a
+helper, the helper must travel with it.
+
+`sub_agents/` -- frontmatter needs a `description:` saying when to delegate; the runner installs
+it into `.agents/agents/<name>.md` with `subagent: true`. It sees only what its own file and the
+delegation prompt say, never the main conversation, and returns text. Worth it for exactly one
+shape of problem: a bounded sub-task whose INPUT is large and whose ANSWER is small. A bad trade
+when the output is as big as the input.
+
+`.agents/hooks.json` -- ONE JSON file: a top-level "hooks" object (or named hook objects) maps
+an event -- `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`,
+`SessionStart` -- to matcher entries (a "matcher" such as "run_command" or "write_file|edit_file",
+plus a "hooks" list of "command"-type entries). Each hook is a shell command receiving the event
+as JSON on stdin (`tool_name`, `tool_input`; PostToolUse adds `tool_response`). A command that
+exits with status 2 blocks the step and its stderr is shown to the model. The only component
+that acts in the tool loop rather than in the prompt -- the only way to enforce something the
+model cannot skip. Keep commands fast and non-interactive; put real logic in a
+`.agents/scripts/` helper the hook calls."""
+
+
+_SURFACE_ANTIGRAVITY_PREFER = """\
+So prefer, in this order:
+  - a SKILL for anything with a recognisable trigger -- a procedure for one kind of change or
+    document, a recurring situation, a tool the work keeps needing. This is the default form
+    for new instruction.
+  - a SCRIPT for a deterministic operation the runs hand-rolled and got wrong, or did slowly.
+  - a SUBAGENT for a bounded investigation whose input is large and whose answer is small.
+  - a HOOK when a recurring, mechanical problem in the tool loop is better handled there than
+    in prose. It acts inside the loop, so it cannot be ignored AND it costs nothing in always-on
+    budget -- which makes it the cheap way to carry knowledge that prose would have to repeat.
+    The recurring shapes: running a fast check after an edit and reporting what broke; blocking
+    a known-bad command with a reason that teaches the fix; and refusing to stop while a
+    required step is still missing.
+  - ALWAYS-ON TEXT last, and only for a short rule that genuinely applies to every run. If you
+    add always-on text, cut something else to pay for it.
+
+EVERY SCRIPT YOU NAME MUST EXIST. A `.agents/scripts/<file>.py` invoked from `AGENTS.md`, a
+skill or a hook must ship in the same proposal, and a skill's own helper goes at
+`.agents/skills/<skill-name>/scripts/<file>.py`. A helper placed directly in the skill
+directory is OFF THE EDITABLE SURFACE and silently dropped, leaving the skill invoking a file
+that does not exist. Never write `.agents/agents/` directly: the runner builds it from
+`sub_agents/`."""
+
+
+_TTS_SURFACE_HEAD_ANTIGRAVITY = """\
+# EDITABLE HARNESS SURFACE
+
+You may write ONLY these paths. Anything else is off the editable surface: it is dropped before
+your work is used, however good it is.
+
+| path | component | when it is in context |
+|---|---|---|
+| `AGENTS.md` | c1/c3/c4/c6 persona, rules, durable facts, tool prose | ALWAYS ON -- loaded whole into every session |
+| `.agents/skills/<name>/SKILL.md` | c6 reusable workflow | name+description listed; the BODY is read ON DEMAND |
+| `.agents/skills/<name>/scripts/*` | helper carried with its skill | run via run_command |
+| `sub_agents/<name>/AGENT.md` | c5 delegated subagent | run ON DEMAND in its OWN context, returns text |
+| `.agents/scripts/<name>.py` | c7 deterministic helper | run ON DEMAND via run_command as `python3 .agents/scripts/<name>.py` |
+| `.agents/hooks.json` | c8 lifecycle hooks | fire INSIDE the tool loop, on every matching event |
+
+## The two on-demand levers that are easy to get wrong
+
+`sub_agents/<name>/AGENT.md` -- frontmatter needs a `description:` saying when to delegate. It
+runs in a SEPARATE context: it sees only what its own file and the delegation message say,
+never the main conversation, and it returns text. Worth it for exactly one shape of problem --
+a bounded sub-task whose inputs are large and whose ANSWER is small. A bad trade when the
+output is as big as the input.
+
+`.agents/hooks.json` -- ONE JSON file: a top-level "hooks" object maps an event (`PreToolUse`,
+`PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`, `SessionStart`) to matcher entries --
+a "matcher" such as "run_command" plus a "hooks" list of "command"-type entries. Each hook is a
+shell command receiving the event as JSON on stdin; one that exits with status 2 blocks the step
+and shows its stderr to the model. Unlike everything else here it acts in the tool loop rather
+than in the prompt, which is the only way to enforce something the model cannot skip. Keep
+commands fast and non-interactive; put real logic in a `.agents/scripts/` helper the hook calls.
+
+Both levers are rare in the harnesses adopted so far. Read that as a gap in what has been tried,
+not as a verdict -- but still add one only where a trajectory shows the failure it would fix.
+
+Hard rules, each one learned from a previous failure:
+- The single most common failure of this harness family is producing NO deliverable because the
+  model exhausted its budget on reasoning. Always-on prose makes that WORSE. Prefer an
+  on-demand skill over new always-on prose; if you add always-on text, cut something else --
+  `AGENTS.md` is capped at 24,000 characters.
+- A skill's description is its trigger: the agent opens a skill only when the description
+  matches the situation in front of it. Scripts run via run_command.
+- `.agents/scripts/*.py` filenames must be snake_case and must compile under py_compile."""
+
+
 _SURFACE_COMMAND_HEAD = """\
 # WHAT YOU CAN CHANGE
 
@@ -785,6 +892,21 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             _surface_part(claude_md, "# HOW TO MAKE A CHANGE"),
         ]
     )
+    agy_md = "\n\n".join(
+        [
+            _SURFACE_ANTIGRAVITY_HEAD,
+            _surface_part(_SURFACE_CODEX, "Change only what a trajectory", "So prefer, in this"),
+            _SURFACE_ANTIGRAVITY_PREFER,
+            shape_and_how,
+        ]
+    )
+    agy_tts = "\n\n".join(
+        [
+            _TTS_SURFACE_HEAD_ANTIGRAVITY,
+            _surface_part(agy_md, "EVERY SCRIPT YOU NAME", "THE DELIVERABLE'S SHAPE"),
+            _surface_part(agy_md, "# HOW TO MAKE A CHANGE"),
+        ]
+    )
     command_md = "\n\n".join([_SURFACE_COMMAND_HEAD, shape_and_how])
     return {
         "opencode": _SurfaceText(
@@ -837,6 +959,24 @@ def _build_surface_texts() -> dict[str, _SurfaceText]:
             ),
             tts_surface=claude_tts,
             script_dir=".claude/scripts",
+        ),
+        "antigravity": _SurfaceText(
+            surface_md=agy_md,
+            inv=_levers(
+                _INV_TEMPLATE,
+                script_lever="`.agents/scripts/<name>.py`",
+                skill_lever="use an on-demand skill for a narrow multi-step procedure, write its\n"
+                "  description as its trigger, and carry any helper it requires.",
+                loop_lever="hook in `.agents/hooks.json` -- for example, a `Stop` hook that "
+                "refuses to finish before a {deliverable} exists, with a corrective reason",
+            ),
+            dom=_levers(
+                _DOM_TEMPLATE,
+                trigger_sentence="The agent finds a skill by its description alone: write the "
+                "description as the situation the skill handles.",
+            ),
+            tts_surface=agy_tts,
+            script_dir=".agents/scripts",
         ),
         "command": _SurfaceText(
             surface_md=command_md,

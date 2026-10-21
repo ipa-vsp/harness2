@@ -45,7 +45,7 @@ kind = Path(sys.argv[0]).name
 if "--version" in argv:
     print("fixture 1.0")
     sys.exit(0)
-status = argv in (["login", "status"], ["auth", "status"])
+status = argv in (["login", "status"], ["auth", "status"], ["-p", "/usage", "--output-format", "json"])
 cwd = Path.cwd()
 home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
 config = home / "config.toml"
@@ -91,7 +91,7 @@ else:
     (cwd / "output").mkdir(exist_ok=True)
     (cwd / "output/report.txt").write_text("done\n")
     text = "done"
-if kind == "claude":
+if kind in ("claude", "agy"):
     print(json.dumps({"type": "result", "subtype": "success", "result": text,
                       "total_cost_usd": 0.01}))
 else:
@@ -114,7 +114,7 @@ class SubscriptionTests(unittest.TestCase):
         (self.project / "AGENTS.md").write_text("Read the task.\n")
         binary = self.root / "bin"
         binary.mkdir()
-        for name in ("claude", "codex"):
+        for name in ("claude", "codex", "agy"):
             path = binary / name
             path.write_text(f"#!{sys.executable}\n" + FAKE_CLI)
             path.chmod(0o755)
@@ -182,11 +182,13 @@ class SubscriptionTests(unittest.TestCase):
 
     def test_builtin_providers_use_cli_auth(self):
         config = settings.load(self.project)
-        for name in ("claude-login", "chatgpt-login"):
+        for name in ("claude-login", "chatgpt-login", "antigravity-login"):
             self.assertEqual(config.provider(name).type, name)
         self.assertEqual(providers.claude_env(config.provider("claude-login")), {})
+        self.assertEqual(providers.antigravity_env(config.provider("antigravity-login")), {})
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(providers.claude_env(config.provider("claude-login")), {})
+            self.assertEqual(providers.antigravity_env(config.provider("antigravity-login")), {})
 
     def test_claude_subscription_executor_and_improver_launches(self):
         adapter = self.adapter()
@@ -286,6 +288,7 @@ class SubscriptionTests(unittest.TestCase):
                 "--json",
                 "--skip-git-repo-check",
                 "--dangerously-bypass-approvals-and-sandbox",
+                "--dangerously-bypass-hook-trust",
                 "--ephemeral",
                 "--ignore-user-config",
                 "--ignore-rules",
@@ -313,6 +316,54 @@ class SubscriptionTests(unittest.TestCase):
             )
         self.assertEqual({p.name: p.read_bytes() for p in home.iterdir()}, before)
         self.assertFalse((settings.state_dir() / "codex-home").exists())
+
+    def test_antigravity_subscription_executor_and_improver_launches(self):
+        adapter = self.adapter(
+            **{
+                "executor.name": "antigravity",
+                "executor.model": "antigravity-login/gemini-3-flash-preview",
+                "improver.channel": "antigravity",
+                "improver.model": "antigravity-login/gemini-3.1-pro-high",
+            }
+        )
+        adapter.execute("one", None, "antigravity")
+        record = self.launch_record("antigravity-login executor")
+        self.assertEqual(
+            record["argv"],
+            [
+                "-p",
+                "Produce a report.\n\nSave your deliverables in the output/ directory.",
+                "--output-format",
+                "stream-json",
+                "--dangerously-skip-permissions",
+                "--disable-slash-commands",
+                "--model",
+                "gemini-3-flash-preview",
+                "--effort",
+                "high",
+            ],
+        )
+        context = self.root / "context"
+        context.mkdir()
+        Proposer(adapter.spec.channels["proposer"]).call("mission", context, "improver")
+        record = self.launch_record("antigravity-login improver")
+        self.assertEqual(
+            record["argv"],
+            [
+                "--dangerously-skip-permissions",
+                "--disable-slash-commands",
+                "-p",
+                "mission",
+                "--output-format",
+                "json",
+                "--effort",
+                "high",
+                "--model",
+                "gemini-3.1-pro-high",
+            ],
+        )
+        for record in self.records():
+            self.assertTrue(all(key not in record["env"] for key in providers.STRIP_ENV))
 
     def test_configured_chatgpt_home_is_used_without_writes(self):
         for populated in (False, True):
@@ -491,13 +542,18 @@ class SubscriptionTests(unittest.TestCase):
     def test_wrong_cli_and_bridge_reject_subscription_providers(self):
         claude = providers.Provider("claude-login", "claude-login")
         chatgpt = providers.Provider("chatgpt-login", "chatgpt-login")
+        agy = providers.Provider("antigravity-login", "antigravity-login")
         with self.assertRaisesRegex(ConfigError, "cannot use a ChatGPT login"):
             providers.claude_env(chatgpt)
+        with self.assertRaisesRegex(ConfigError, "cannot use an Antigravity login"):
+            providers.claude_env(agy)
+        with self.assertRaisesRegex(ConfigError, "cannot use a claude-login login"):
+            providers.antigravity_env(claude)
         with self.assertRaises(ConfigError):
             providers.codex_config(claude, "model", "high")
         with self.assertRaises(ConfigError):
             providers.codex_args(claude, "model", "high")
-        for provider in (claude, chatgpt):
+        for provider in (claude, chatgpt, agy):
             for operation in (providers.opencode_config, providers.litellm_params):
                 with self.subTest(provider=provider.type, operation=operation.__name__):
                     with self.assertRaisesRegex(ConfigError, "API provider"):
@@ -507,10 +563,13 @@ class SubscriptionTests(unittest.TestCase):
         for channel, provider_name in (
             ("claude", "claude-login"),
             ("codex", "chatgpt-login"),
+            ("antigravity", "antigravity-login"),
             ("claude", "chatgpt-login"),
             ("codex", "claude-login"),
+            ("antigravity", "claude-login"),
             ("opencode", "claude-login"),
             ("opencode", "chatgpt-login"),
+            ("opencode", "antigravity-login"),
         ):
             with self.subTest(channel=channel, provider=provider_name):
                 adapter = (
@@ -534,6 +593,7 @@ class SubscriptionTests(unittest.TestCase):
                 compatible = (channel, provider_name) in (
                     ("claude", "claude-login"),
                     ("codex", "chatgpt-login"),
+                    ("antigravity", "antigravity-login"),
                 )
                 self.assertEqual(code, 0 if compatible else 1)
                 self.assertEqual(roles["improver"]["ok"], compatible)

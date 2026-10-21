@@ -45,7 +45,16 @@ class ProviderTests(unittest.TestCase):
             provider.region = "changed"
         self.assertEqual(
             providers.PROVIDER_TYPES,
-            ("anthropic", "openai", "vertex", "bedrock", "claude-login", "chatgpt-login"),
+            (
+                "anthropic",
+                "openai",
+                "gemini",
+                "vertex",
+                "bedrock",
+                "claude-login",
+                "chatgpt-login",
+                "antigravity-login",
+            ),
         )
         self.assertEqual(
             providers.STRIP_ENV,
@@ -121,6 +130,34 @@ class ProviderTests(unittest.TestCase):
             ConfigError, "Claude Code needs an Anthropic-compatible provider"
         ):
             providers.claude_env(Provider("o", "openai"))
+
+    def test_antigravity_env_for_login_gemini_and_vertex(self):
+        self.assertEqual(providers.antigravity_env(None), {})
+        self.assertEqual(
+            providers.antigravity_env(Provider("agy", "antigravity-login")),
+            {},
+        )
+        with patch.dict(os.environ, {"MY_GEMINI_KEY": "g-secret"}, clear=True):
+            self.assertEqual(
+                providers.antigravity_env(
+                    Provider("g", "gemini", "https://gemini.example.com", "MY_GEMINI_KEY")
+                ),
+                {
+                    "GEMINI_API_KEY": "g-secret",
+                    "GOOGLE_GEMINI_BASE_URL": "https://gemini.example.com",
+                },
+            )
+        self.assertEqual(
+            providers.antigravity_env(Provider("v", "vertex", project="proj", region="us-central1")),
+            {
+                "GOOGLE_CLOUD_PROJECT": "proj",
+                "GOOGLE_CLOUD_LOCATION": "us-central1",
+                "AGY_ADC_AUTH": "1",
+            },
+        )
+        for kind in ("anthropic", "openai", "bedrock", "claude-login", "chatgpt-login"):
+            with self.subTest(kind=kind), self.assertRaises(ConfigError):
+                providers.antigravity_env(Provider("p", kind))
 
     def test_codex_config_is_valid_toml_and_escapes_values(self):
         provider = Provider('local."name 😀', "openai", "http://localhost:8000/v1", "LOCAL_KEY")
@@ -283,6 +320,7 @@ class ProviderTests(unittest.TestCase):
     def test_unknown_provider_types_raise_config_error(self):
         for function, args in (
             (providers.claude_env, ()),
+            (providers.antigravity_env, ()),
             (providers.codex_config, ("model", "high")),
             (providers.opencode_config, ("model",)),
             (providers.litellm_params, ("model",)),

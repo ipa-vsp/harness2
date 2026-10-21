@@ -99,6 +99,8 @@ class Proposer:
         if self.spec.provider is not None:
             if self.spec.kind == "claude":
                 e.update(providers.claude_env(self.spec.provider))
+            elif self.spec.kind == "antigravity":
+                e.update(providers.antigravity_env(self.spec.provider))
             elif self.spec.kind == "opencode":
                 e.update(providers.opencode_config(self.spec.provider, self._model())[1])
         return e
@@ -107,7 +109,11 @@ class Proposer:
         return self.spec.model.split("/", 1)[-1]
 
     def _bin(self) -> list[str]:
-        return shlex.split(self.spec.bin) if self.spec.bin else [self.spec.kind]
+        if self.spec.bin:
+            return shlex.split(self.spec.bin)
+        if self.spec.kind == "antigravity":
+            return ["antigravity" if not shutil.which("agy") and shutil.which("antigravity") else "agy"]
+        return [self.spec.kind]
 
     def _emit(self, reply: Reply) -> None:
         events.emit(
@@ -292,6 +298,7 @@ class Proposer:
                 "--json",
                 "--skip-git-repo-check",
                 "--dangerously-bypass-approvals-and-sandbox",
+                "--dangerously-bypass-hook-trust",
                 "--ephemeral",
                 *providers.codex_args(self.spec.provider, model, self.spec.effort),
                 "-C",
@@ -317,6 +324,55 @@ class Proposer:
         if errors or p.returncode:
             return "", 0.0, f"rc={p.returncode}: {p.stdout} {p.stderr}"
         return text, 0.0, ""
+
+    def _antigravity(self, cwd: Path, mission: str, system: str, wall: int) -> tuple[str, float, str]:
+        full_prompt = (
+            f"# SYSTEM INSTRUCTIONS\n\n{system}\n\n# END\n\n{mission}" if system else mission
+        )
+        if len(full_prompt) > SYSTEM_ARG_MAX:
+            (cwd / "MISSION.md").write_text(full_prompt, encoding="utf-8")
+            arg_prompt = "Read MISSION.md first and follow all instructions in it."
+        else:
+            arg_prompt = full_prompt
+        cmd = [
+            *self._bin(),
+            "--dangerously-skip-permissions",
+            "--disable-slash-commands",
+            "-p",
+            arg_prompt,
+            "--output-format",
+            "json",
+            "--effort",
+            self.spec.effort,
+            "--model",
+            self._model(),
+        ]
+        p = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            cwd=cwd,
+            env=self.env(),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=wall,
+        )
+        payload = _parse_json(p.stdout)
+        if isinstance(payload.get("result"), dict):
+            payload = payload["result"]
+        text = str(payload.get("response") or payload.get("result") or payload.get("text") or "")
+        cost = float(payload.get("total_cost_usd") or payload.get("cost_usd") or 0.0)
+        err = ""
+        status = payload.get("status")
+        if (
+            p.returncode
+            or payload.get("is_error")
+            or (status is not None and status != "SUCCESS")
+            or payload.get("error")
+        ):
+            err = f"rc={p.returncode}: {payload.get('error') or ''} {p.stdout} {p.stderr}"
+            text = ""
+        return text, cost, err
 
     def _opencode(self, cwd: Path, mission: str, system: str, wall: int) -> tuple[str, float, str]:
         (cwd / "MISSION.md").write_text(

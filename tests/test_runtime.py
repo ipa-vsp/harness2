@@ -117,7 +117,7 @@ with open(os.environ["FAKE_RECORD"], "a") as output:
     output.write(json.dumps(record) + "\n")
 if "FAKE_OUTPUT" in os.environ:
     print(os.environ["FAKE_OUTPUT"])
-elif kind == "claude":
+elif kind in ("claude", "agy"):
     print(json.dumps({"result": "done", "total_cost_usd": 0.25, "subtype": "success"}))
 elif kind == "codex":
     print(json.dumps({"type": "item.completed", "item": {
@@ -140,7 +140,7 @@ class ProposerTests(unittest.TestCase):
         self.root = Path(temporary.name)
         binary = self.root / "bin"
         binary.mkdir()
-        for kind in ("claude", "codex", "opencode"):
+        for kind in ("claude", "codex", "agy", "opencode"):
             path = binary / kind
             path.write_text(f"#!{sys.executable}\n" + FAKE_CLI)
             path.chmod(0o755)
@@ -163,8 +163,9 @@ class ProposerTests(unittest.TestCase):
         return [json.loads(line) for line in self.record.read_text().splitlines()]
 
     def test_channels_alias_empty_and_human(self):
-        self.assertEqual(CHANNELS, ("claude", "codex", "opencode", "human"))
+        self.assertEqual(CHANNELS, ("claude", "codex", "antigravity", "opencode", "human"))
         self.assertEqual(ChannelSpec("claude_cli", "local/model").kind, "claude")
+        self.assertEqual(ChannelSpec("agy", "local/model").kind, "antigravity")
         with self.assertRaises(ValueError):
             ChannelSpec("missing", "model")
         with self.assertRaises(ValueError):
@@ -178,6 +179,7 @@ class ProposerTests(unittest.TestCase):
         providers = {
             "claude": Provider("local", "anthropic", "https://claude.invalid", "CUSTOM_KEY"),
             "codex": Provider("local", "openai", "https://responses.invalid/v1", "CUSTOM_KEY"),
+            "antigravity": Provider("local", "gemini", "https://gemini.invalid", "CUSTOM_KEY"),
             "opencode": Provider("local", "openai", "https://chat.invalid/v1", "CUSTOM_KEY"),
         }
         for kind, provider in providers.items():
@@ -186,7 +188,8 @@ class ProposerTests(unittest.TestCase):
                 reply = prop.call("mission", None, kind, system="system")
                 self.assertEqual(reply.text, "done")
                 self.assertEqual(
-                    reply.cost_usd, {"claude": 0.25, "codex": 0, "opencode": 0.125}[kind]
+                    reply.cost_usd,
+                    {"claude": 0.25, "codex": 0, "antigravity": 0.25, "opencode": 0.125}[kind],
                 )
                 record = self.records()[-1]
                 cwd = record["cwd"]
@@ -224,6 +227,7 @@ class ProposerTests(unittest.TestCase):
                             "--json",
                             "--skip-git-repo-check",
                             "--dangerously-bypass-approvals-and-sandbox",
+                            "--dangerously-bypass-hook-trust",
                             "--ephemeral",
                             "-C",
                             cwd,
@@ -241,6 +245,27 @@ class ProposerTests(unittest.TestCase):
                     self.assertEqual(
                         config["model_providers"]["harness2-local"]["env_key"], "CUSTOM_KEY"
                     )
+                elif kind == "antigravity":
+                    self.assertEqual(
+                        record["argv"],
+                        [
+                            "--dangerously-skip-permissions",
+                            "--disable-slash-commands",
+                            "-p",
+                            "# SYSTEM INSTRUCTIONS\n\nsystem\n\n# END\n\nmission",
+                            "--output-format",
+                            "json",
+                            "--effort",
+                            "high",
+                            "--model",
+                            "test-model",
+                        ],
+                    )
+                    expected_env |= {
+                        "GEMINI_API_KEY": "fake-key",
+                        "GOOGLE_GEMINI_BASE_URL": provider.base_url,
+                    }
+                    self.assertEqual(record["stdin"], "")
                 else:
                     self.assertEqual(
                         record["argv"],

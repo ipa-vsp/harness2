@@ -26,11 +26,13 @@ from ..settings import ConfigError
 
 
 def cli_argv(binary: str, default: str) -> list[str]:
-    argv = shlex.split(binary or default)
-    resolved = shutil.which(argv[0]) if argv else None
-    if resolved is None:
-        raise ConfigError(f"executor binary not found: {binary or default}")
-    return [resolved, *argv[1:]]
+    candidates = [binary] if binary else (["agy", "antigravity"] if default in ("antigravity", "agy") else [default])
+    for candidate in candidates:
+        argv = shlex.split(candidate)
+        resolved = shutil.which(argv[0]) if argv else None
+        if resolved is not None:
+            return [resolved, *argv[1:]]
+    raise ConfigError(f"executor binary not found: {binary or default}")
 
 
 def check_cli(binary: str, default: str) -> None:

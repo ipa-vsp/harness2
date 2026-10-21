@@ -19,9 +19,18 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
 from ._common import Context
+
+
+def _pkg_version() -> str:
+    for dist in ("harness2-cli", "harness2"):
+        try:
+            return version(dist)
+        except PackageNotFoundError:
+            continue
+    return "0.1.0"
 
 COMMANDS = (
     "init",
@@ -54,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="harness2",
         description="Tune your coding agent's harness on your own tasks.",
         epilog="Start with `harness2 init` in your project. "
-        "Documentation: https://github.com/3ae3ae/harness2-cli",
+        "Documentation: https://github.com/ipa-vsp/harness2",
     )
     parser.add_argument("-C", "--project", metavar="DIR", help="run as if started in DIR")
     parser.add_argument("--profile", metavar="NAME", help="apply the settings profile NAME")
@@ -69,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-q", "--quiet", action="store_true", help="print results only")
     parser.add_argument("-v", "--verbose", action="store_true", help="print debug details")
     parser.add_argument("--json", action="store_true", help="print results as JSON")
-    parser.add_argument("--version", action="version", version=version("harness2-cli"))
+    parser.add_argument("--version", action="version", version=_pkg_version())
     subparsers = parser.add_subparsers(dest="command", required=True)
     for name in COMMANDS:
         module = importlib.import_module(f"harness2.cli.{name}")

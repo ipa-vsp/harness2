@@ -39,6 +39,7 @@ from .core.spec import BenchPrompts, BenchSpec, ChannelSpec
 from .registry import SuiteContext
 from .settings import ConfigError, Settings
 from .substrate._native import checked_path, cli_argv
+from .substrate.antigravity import AntigravitySubstrate
 from .substrate.claude import ClaudeSubstrate, parse_events
 from .substrate.codex import CodexSubstrate
 from .substrate.command import CommandSubstrate
@@ -312,6 +313,10 @@ class GenericAdapter:
         elif name == "codex":
             self.substrate = CodexSubstrate(bin=self.executor["bin"])
             install_mode = "codex_root"
+        elif name in ("antigravity", "agy"):
+            name = "antigravity"
+            self.substrate = AntigravitySubstrate(bin=self.executor["bin"])
+            install_mode = "antigravity_root"
         elif name == "command":
             try:
                 self.substrate = CommandSubstrate(
@@ -321,7 +326,7 @@ class GenericAdapter:
                 raise ConfigError(str(exc)) from exc
             install_mode = "command_files"
         else:
-            raise ConfigError("the tasks suite runs on claude, codex or command")
+            raise ConfigError("the tasks suite runs on claude, codex, antigravity or command")
         self.spec = BenchSpec(
             name="tasks",
             runs_root=ctx.run_root,
@@ -334,7 +339,7 @@ class GenericAdapter:
             },
             domain_word="area",
             leak_globs=("rubric.md", "check/**"),
-            allow_subagents=name == "claude",
+            allow_subagents=name in ("claude", "antigravity"),
             obs_trunc=self.settings.get("run.obs_trunc"),
         )
         self._warned_drift = False
@@ -449,6 +454,8 @@ class GenericAdapter:
                 provider = self.settings.provider(provider_name)
                 if self.executor["name"] == "claude":
                     env = self.substrate.env(env, provider, run_dir / "claude-home")
+                elif self.executor["name"] in ("antigravity", "agy"):
+                    env = self.substrate.env(env, provider, run_dir / "antigravity-home")
                 else:
                     home = None
                     if provider.type != "chatgpt-login":
@@ -487,6 +494,14 @@ class GenericAdapter:
                 or (
                     event.get("type") == "result"
                     and (event.get("is_error") or event.get("subtype") not in (None, "success"))
+                )
+                or (
+                    event.get("event") == "result"
+                    and isinstance(event.get("result"), dict)
+                    and (
+                        event["result"].get("is_error")
+                        or event["result"].get("status") not in (None, "SUCCESS")
+                    )
                 )
                 for event in parse_events(stream)
             )
@@ -701,8 +716,8 @@ def check(ctx: SuiteContext) -> list[str]:
     problems = []
     settings = ctx.settings
     executor = settings.get("executor.name")
-    if executor not in ("claude", "codex", "command"):
-        problems.append("the tasks suite runs on claude, codex or command")
+    if executor not in ("claude", "codex", "antigravity", "agy", "command"):
+        problems.append("the tasks suite runs on claude, codex, antigravity or command")
     elif executor != "command":
         try:
             cli_argv(settings.get("executor.bin"), executor)
@@ -710,6 +725,7 @@ def check(ctx: SuiteContext) -> list[str]:
             problems.append(str(exc))
     elif not settings.get("executor.command") or not settings.get("executor.editable"):
         problems.append("command executor needs executor.command and non-empty executor.editable")
+    checked_providers: set[str] = set()
     for role in ("executor", "improver", "selector", "reflector", "judge"):
         if role == "executor":
             if executor == "command":
@@ -727,7 +743,9 @@ def check(ctx: SuiteContext) -> list[str]:
             if role != "executor":
                 _channel(settings, role)
             provider_name, _ = providers.split_model(values["model"])
-            problems.extend(providers.check(settings.provider(provider_name)))
+            if provider_name not in checked_providers:
+                checked_providers.add(provider_name)
+                problems.extend(providers.check(settings.provider(provider_name)))
         except ConfigError as exc:
             problems.append(f"{role}: {exc}")
     tasks_dir = settings.path("paths.tasks")

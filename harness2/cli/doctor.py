@@ -80,6 +80,8 @@ def run(args, ctx) -> int:
                     providers.claude_env(provider)
                 elif channel == "codex":
                     providers.codex_args(provider, bare, role["effort"])
+                elif channel in ("antigravity", "agy"):
+                    providers.antigravity_env(provider)
                 elif channel == "opencode":
                     providers.opencode_config(provider, bare)
                 if channel != "command":

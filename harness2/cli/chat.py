@@ -41,10 +41,15 @@ def add_parser(sub) -> argparse.ArgumentParser:
     p = sub.add_parser(
         "chat",
         help="talk to your agent CLI about tasks, runs and results",
-        description="Start Claude Code or Codex in this project with a guide to harness2 "
-        "added to its instructions.",
+        description="Start Claude Code, Codex or Antigravity in this project with a guide to "
+        "harness2 added to its instructions.",
     )
-    p.add_argument("--with", dest="tool", choices=("claude", "codex"), help="which CLI to start")
+    p.add_argument(
+        "--with",
+        dest="tool",
+        choices=("claude", "codex", "antigravity"),
+        help="which CLI to start",
+    )
     return p
 
 
@@ -53,9 +58,9 @@ def run(args, ctx) -> int:
         print("harness2 chat is a conversation and needs a terminal.", file=sys.stderr)
         return 1
     tool = args.tool or _default_tool(ctx.settings)
-    binary = shutil.which(tool) if tool else None
+    binary = _which_tool(tool) if tool else None
     if not binary:
-        print("Neither `claude` nor `codex` is on PATH.", file=sys.stderr)
+        print("Neither `claude`, `codex` nor `agy` is on PATH.", file=sys.stderr)
         return 1
     guide = (
         CHAT_INTRO.format(root=ctx.project)
@@ -64,6 +69,8 @@ def run(args, ctx) -> int:
     )
     if tool == "claude":
         argv = [binary, "--append-system-prompt", guide]
+    elif tool == "antigravity":
+        argv = [binary, "-i", guide]
     else:
         argv = [binary, "-c", f"developer_instructions={json.dumps(guide)}"]
     os.chdir(ctx.project)
@@ -71,8 +78,19 @@ def run(args, ctx) -> int:
     return 1  # unreachable
 
 
+def _which_tool(tool: str) -> str | None:
+    if tool == "antigravity":
+        return shutil.which("agy") or shutil.which("antigravity")
+    return shutil.which(tool)
+
+
 def _default_tool(settings) -> str | None:
     for tool in (settings.get("improver.channel"), settings.get("executor.name"), "claude"):
-        if tool in ("claude", "codex") and shutil.which(tool):
+        if tool == "agy":
+            tool = "antigravity"
+        if tool in ("claude", "codex", "antigravity") and _which_tool(tool):
             return tool
-    return "codex" if shutil.which("codex") else None
+    for fallback in ("codex", "antigravity"):
+        if _which_tool(fallback):
+            return fallback
+    return None

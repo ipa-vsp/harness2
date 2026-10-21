@@ -72,8 +72,10 @@ DEFAULTS = {
             "base_url": "https://api.openai.com/v1",
             "api_key_env": "OPENAI_API_KEY",
         },
+        "gemini": {"type": "gemini", "base_url": "", "api_key_env": "GEMINI_API_KEY"},
         "claude-login": {"type": "claude-login"},
         "chatgpt-login": {"type": "chatgpt-login"},
+        "antigravity-login": {"type": "antigravity-login"},
     },
 }
 _MISSING = object()

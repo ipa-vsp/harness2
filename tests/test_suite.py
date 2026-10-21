@@ -122,7 +122,7 @@ class SuiteTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(self.project)], check=True)
         binary = self.root / "bin"
         binary.mkdir()
-        for name in ("claude", "codex"):
+        for name in ("claude", "codex", "agy"):
             path = binary / name
             path.write_text(f"#!{sys.executable}\n" + FAKE_CLI)
             path.chmod(0o755)
@@ -134,6 +134,7 @@ class SuiteTests(unittest.TestCase):
             XDG_CONFIG_HOME=str(self.root / "config"),
             ANTHROPIC_API_KEY="fake-key",
             OPENAI_API_KEY="fake-key",
+            GEMINI_API_KEY="fake-key",
         )
         environment = patch.dict(os.environ, env, clear=True)
         environment.start()
@@ -260,6 +261,32 @@ class SuiteTests(unittest.TestCase):
         self.assertIn('model = "fake"', record["config"])
         self.assertEqual(record["argv"][-1], "-")
         self.assertFalse(adapter.spec.allow_subagents)
+
+    def test_antigravity_stream_and_subagents(self):
+        ctx = self.context(**{"executor.name": "antigravity", "executor.model": "gemini/fake"})
+        adapter = suite.make_adapter(ctx)
+        self.assertTrue(adapter.spec.allow_subagents)
+        run_dir = adapter.execute("one", None, "antigravity")
+        self.assertTrue(adapter.delivered(run_dir))
+        self.assertEqual(adapter.rollout_cost(run_dir), 0.125)
+        self.assertNotIn("AGENTS.md", adapter.deliverable_text(run_dir))
+        self.assertIn("Finished the change.", adapter.deliverable_text(run_dir))
+        record = self.records()[0]
+        self.assertEqual(
+            record["argv"],
+            [
+                "-p",
+                "Change code.txt as requested.\n",
+                "--output-format",
+                "stream-json",
+                "--dangerously-skip-permissions",
+                "--disable-slash-commands",
+                "--model",
+                "fake",
+                "--effort",
+                "high",
+            ],
+        )
 
     def test_agent_failure_and_timeout_are_completed(self):
         for run_id, env, kwargs, expected in (
